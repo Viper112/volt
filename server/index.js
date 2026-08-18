@@ -162,7 +162,10 @@ function ingestHost(req) {
   if (process.env.RTMP_HOST) return process.env.RTMP_HOST
   const xf = req.headers['x-forwarded-host']
   if (xf) return String(xf).split(',')[0].replace(/:\d+$/, '')
-  return req.hostname === '127.0.0.1' ? 'localhost' : req.hostname || 'localhost'
+  // OBS on Windows often times out on "localhost" (::1). Force IPv4.
+  const host = req.hostname || '127.0.0.1'
+  if (host === 'localhost' || host === '::1') return '127.0.0.1'
+  return host
 }
 
 function ingestPayload(req, user) {

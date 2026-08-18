@@ -36,6 +36,8 @@ export function GoLive() {
   } | null>(null)
 
   const obsLive = !!user && streams.some((s) => s.username === user.username && s.source === 'rtmp')
+  const localRtmp = 'rtmp://127.0.0.1:1935/live'
+  const rtmpHosted = rtmpUrl && !/127\.0\.0\.1|localhost/i.test(rtmpUrl)
 
   useEffect(() => {
     return () => stopAll()
@@ -286,18 +288,28 @@ export function GoLive() {
           <p className="mt-2 text-sm text-mute">
             Use these settings in OBS or Streamlabs. Paste them under Settings → Stream → Service: Custom.
           </p>
+          {rtmpHosted && (
+            <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              Render does not open RTMP port 1935, so OBS will time out against this public URL. On this PC run{' '}
+              <code className="text-white">npm run dev</code>, open{' '}
+              <a className="text-volt underline" href="http://localhost:5173/go-live">
+                localhost:5173/go-live
+              </a>
+              , and set OBS Server to <code className="text-white">{localRtmp}</code>.
+            </p>
+          )}
           <div className="mt-4 grid gap-3">
             <label className="block text-sm text-mute">
               Server
               <div className="mt-1 flex gap-2">
                 <input
                   readOnly
-                  value={rtmpUrl || 'rtmp://localhost:1935/live'}
+                  value={rtmpUrl || localRtmp}
                   className="w-full rounded-md border border-line bg-ink px-3 py-2 font-mono text-sm text-white"
                 />
                 <button
                   type="button"
-                  onClick={() => copy('server', rtmpUrl || 'rtmp://localhost:1935/live')}
+                  onClick={() => copy('server', rtmpUrl || localRtmp)}
                   className="rounded-md bg-hover px-3 hover:bg-line"
                   title="Copy server"
                 >
