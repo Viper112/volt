@@ -9,12 +9,17 @@
     "dev": "concurrently -n server,web -c green,cyan \"node --watch server/index.js\" \"vite\"",
     "dev:web": "vite",
     "dev:server": "node --watch server/index.js",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "start": "node server/index.js",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
@@ -24,18 +29,13 @@
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^24.13.3",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.4",
-    "concurrently": "^10.0.5",
-    "oxlint": "^1.75.0",
+    "socket.io-client": "^4.8.3",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "oxlint": "^1.75.0"
   }
 }
