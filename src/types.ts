@@ -32,7 +32,7 @@ export type Stream = {
   videoUrl: string
   tags: string[]
   featured?: boolean
-  source: 'vod' | 'webrtc'
+  source: 'vod' | 'webrtc' | 'rtmp'
 }
 
 export type Clip = {

@@ -39,4 +39,27 @@ export const api = {
   unfollow: (username: string) =>
     request<{ following: string[] }>(`/api/follow/${username}`, { method: 'DELETE' }),
   liveStreams: () => request<{ streams: Stream[] }>('/api/live'),
+  ingest: () =>
+    request<{
+      rtmpUrl: string
+      streamKey: string
+      playbackUrl: string
+      title: string
+      category: string
+      live: boolean
+    }>('/api/ingest'),
+  saveIngest: (title: string, category: string) =>
+    request<{
+      rtmpUrl: string
+      streamKey: string
+      playbackUrl: string
+      title: string
+      category: string
+      live: boolean
+    }>('/api/ingest', {
+      method: 'POST',
+      body: JSON.stringify({ title, category }),
+    }),
+  rotateKey: () =>
+    request<{ streamKey: string; rtmpUrl: string }>('/api/ingest/rotate', { method: 'POST' }),
 }

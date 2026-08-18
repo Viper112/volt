@@ -1,17 +1,27 @@
 import express from 'express'
 import cors from 'cors'
 import http from 'http'
+import crypto from 'crypto'
 import { Server } from 'socket.io'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { startRtmpServer } from './media.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3001
 const JWT_SECRET = process.env.JWT_SECRET || 'volt-dev-secret'
 const USERS_FILE = path.join(__dirname, 'users.json')
+const RTMP_PORT = process.env.RTMP_PORT || 1935
+const NMS_HTTP_PORT = process.env.NMS_HTTP_PORT || 8000
+
+const ingestMeta = new Map()
+
+function makeStreamKey() {
+  return crypto.randomBytes(18).toString('base64url')
+}
 
 const app = express()
 app.use(cors())
@@ -40,9 +50,18 @@ if (!users.find((u) => u.username === 'demo')) {
     displayName: 'Demo',
     passwordHash: bcrypt.hashSync('demo123', 8),
     following: ['nova', 'luna', 'kira'],
+    streamKey: makeStreamKey(),
   })
   saveUsers(users)
 }
+let changedKeys = false
+for (const u of users) {
+  if (!u.streamKey) {
+    u.streamKey = makeStreamKey()
+    changedKeys = true
+  }
+}
+if (changedKeys) saveUsers(users)
 
 const liveStreams = new Map()
 const hostSockets = new Map()
@@ -91,6 +110,7 @@ app.post('/api/auth/register', (req, res) => {
     displayName: username,
     passwordHash: bcrypt.hashSync(password, 8),
     following: [],
+    streamKey: makeStreamKey(),
   }
   users.push(user)
   saveUsers(users)
@@ -137,6 +157,129 @@ app.delete('/api/follow/:username', (req, res) => {
 app.get('/api/live', (_req, res) => {
   res.json({ streams: liveList() })
 })
+
+function ingestHost(req) {
+  if (process.env.RTMP_HOST) return process.env.RTMP_HOST
+  const xf = req.headers['x-forwarded-host']
+  if (xf) return String(xf).split(',')[0].replace(/:\d+$/, '')
+  return req.hostname === '127.0.0.1' ? 'localhost' : req.hostname || 'localhost'
+}
+
+function ingestPayload(req, user) {
+  const host = ingestHost(req)
+  return {
+    rtmpUrl: `rtmp://${host}:${RTMP_PORT}/live`,
+    streamKey: user.streamKey,
+    playbackUrl: `/playback/${user.username}.flv`,
+    title: ingestMeta.get(user.username)?.title || 'Live on VOLT',
+    category: ingestMeta.get(user.username)?.category || 'just-chatting',
+    live: liveStreams.get(user.username)?.source === 'rtmp',
+  }
+}
+
+app.get('/api/ingest', (req, res) => {
+  const user = authUser(req)
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  if (!user.streamKey) {
+    user.streamKey = makeStreamKey()
+    saveUsers(users)
+  }
+  res.json(ingestPayload(req, user))
+})
+
+app.post('/api/ingest', (req, res) => {
+  const user = authUser(req)
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  const title = String(req.body.title || 'Live on VOLT').slice(0, 140)
+  const category = String(req.body.category || 'just-chatting')
+  ingestMeta.set(user.username, { title, category })
+  const current = liveStreams.get(user.username)
+  if (current?.source === 'rtmp') {
+    liveStreams.set(user.username, { ...current, title, category })
+    broadcastLive()
+  }
+  res.json(ingestPayload(req, user))
+})
+
+app.post('/api/ingest/rotate', (req, res) => {
+  const user = authUser(req)
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  user.streamKey = makeStreamKey()
+  saveUsers(users)
+  res.json(ingestPayload(req, user))
+})
+
+app.get('/playback/:file', (req, res) => {
+  const match = String(req.params.file || '').match(/^([a-z0-9_]+)\.flv$/i)
+  if (!match) return res.status(404).end()
+  const username = match[1].toLowerCase()
+  const user = users.find((u) => u.username === username)
+  const stream = liveStreams.get(username)
+  if (!user?.streamKey || stream?.source !== 'rtmp') return res.status(404).end()
+  const upstream = http.request(
+    {
+      hostname: '127.0.0.1',
+      port: NMS_HTTP_PORT,
+      path: `/live/${user.streamKey}.flv`,
+      method: 'GET',
+      headers: { connection: 'keep-alive' },
+    },
+    (up) => {
+      res.writeHead(up.statusCode || 200, {
+        'Content-Type': 'video/x-flv',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+      })
+      up.pipe(res)
+    },
+  )
+  upstream.on('error', () => {
+    if (!res.headersSent) res.status(502).end()
+    else res.end()
+  })
+  req.on('close', () => upstream.destroy())
+  upstream.end()
+})
+
+function setRtmpLive(user) {
+  const meta = ingestMeta.get(user.username) || {}
+  liveStreams.set(user.username, {
+    id: `live-${user.username}`,
+    username: user.username,
+    title: meta.title || 'Live on VOLT',
+    category: meta.category || 'just-chatting',
+    language: 'English',
+    mature: false,
+    viewers: liveStreams.get(user.username)?.viewers || 0,
+    thumbnail: '',
+    videoUrl: `/playback/${user.username}.flv`,
+    tags: ['English', 'OBS'],
+    featured: true,
+    source: 'rtmp',
+  })
+  broadcastLive()
+}
+
+function endRtmpLive(user) {
+  const current = liveStreams.get(user.username)
+  if (current?.source !== 'rtmp') return
+  liveStreams.delete(user.username)
+  io.to(`watch:${user.username}`).emit('live:ended')
+  broadcastLive()
+}
+
+try {
+  startRtmpServer({
+    rtmpPort: RTMP_PORT,
+    httpPort: NMS_HTTP_PORT,
+    getUserByKey: (key) => users.find((u) => u.streamKey && u.streamKey === key) || null,
+    onPublish: setRtmpLive,
+    onUnpublish: endRtmpLive,
+  })
+  console.log(`RTMP ingest on rtmp://0.0.0.0:${RTMP_PORT}/live`)
+} catch (err) {
+  console.error('RTMP server failed to start:', err)
+}
 
 if (process.env.NODE_ENV === 'production') {
   const dist = path.join(__dirname, '..', 'dist')
@@ -252,6 +395,11 @@ io.on('connection', (socket) => {
   socket.on('live:stop', () => {
     const username = socket.data.liveUsername
     if (!username) return
+    const current = liveStreams.get(username)
+    if (current && current.source !== 'webrtc') {
+      socket.data.liveUsername = null
+      return
+    }
     liveStreams.delete(username)
     hostSockets.delete(username)
     io.to(`watch:${username}`).emit('live:ended')
@@ -272,9 +420,12 @@ io.on('connection', (socket) => {
     }
     const username = socket.data.liveUsername
     if (username) {
-      liveStreams.delete(username)
-      hostSockets.delete(username)
-      io.to(`watch:${username}`).emit('live:ended')
+      const current = liveStreams.get(username)
+      if (!current || current.source === 'webrtc') {
+        liveStreams.delete(username)
+        hostSockets.delete(username)
+        io.to(`watch:${username}`).emit('live:ended')
+      }
     }
     broadcastLive()
   })

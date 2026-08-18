@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import flvjs from 'flv.js'
 import { Maximize, Pause, Play, Volume2, VolumeX } from 'lucide-react'
 
 type PlayerProps = {
@@ -6,9 +7,10 @@ type PlayerProps = {
   poster?: string
   stream?: MediaStream | null
   live?: boolean
+  format?: 'file' | 'flv'
 }
 
-export function Player({ src, poster, stream, live = true }: PlayerProps) {
+export function Player({ src, poster, stream, live = true, format = 'file' }: PlayerProps) {
   const ref = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(true)
   const [muted, setMuted] = useState(true)
@@ -26,6 +28,25 @@ export function Player({ src, poster, stream, live = true }: PlayerProps) {
     }
     el.srcObject = null
   }, [stream])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || stream || format !== 'flv' || !src) return
+    if (!flvjs.isSupported()) return
+    const player = flvjs.createPlayer(
+      { type: 'flv', url: src, isLive: true, hasAudio: true, hasVideo: true },
+      { enableStashBuffer: false, stashInitialSize: 128 },
+    )
+    player.attachMediaElement(el)
+    player.load()
+    player.play()
+    return () => {
+      player.pause()
+      player.unload()
+      player.detachMediaElement()
+      player.destroy()
+    }
+  }, [src, format, stream])
 
   useEffect(() => {
     const el = ref.current
@@ -50,15 +71,17 @@ export function Player({ src, poster, stream, live = true }: PlayerProps) {
     await ref.current?.parentElement?.requestFullscreen()
   }
 
+  const useFileSrc = !stream && format !== 'flv'
+
   return (
     <div className="group relative bg-black">
       <video
         ref={ref}
-        src={stream ? undefined : src}
+        src={useFileSrc ? src : undefined}
         poster={poster}
         autoPlay
         muted={muted}
-        loop={!stream}
+        loop={useFileSrc}
         playsInline
         className="aspect-video w-full bg-black object-contain"
         onClick={togglePlay}
@@ -88,7 +111,7 @@ export function Player({ src, poster, stream, live = true }: PlayerProps) {
           }}
           className="w-24 accent-volt"
         />
-        <span className="ml-auto text-xs text-mute">1080p</span>
+        <span className="ml-auto text-xs text-mute">{format === 'flv' ? 'RTMP' : '1080p'}</span>
         <button onClick={fullscreen} className="p-1 hover:text-volt">
           <Maximize size={16} />
         </button>

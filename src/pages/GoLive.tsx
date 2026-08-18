@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Monitor, Radio, Square, Video } from 'lucide-react'
+import { Cast, Copy, Eye, EyeOff, Monitor, Radio, RefreshCw, Square, Video } from 'lucide-react'
 import { Chat } from '../components/Chat'
 import { AuthModal } from '../components/AuthModal'
 import { useAuth } from '../context/AuthContext'
+import { useLive } from '../context/LiveContext'
 import { categories } from '../data/catalog'
+import { api } from '../lib/api'
 import { getSocket } from '../lib/socket'
 
 const ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 
 export function GoLive() {
   const { user } = useAuth()
+  const { streams } = useLive()
   const navigate = useNavigate()
   const [auth, setAuth] = useState<'login' | 'signup' | null>(null)
   const [title, setTitle] = useState('Live on VOLT')
@@ -18,6 +21,10 @@ export function GoLive() {
   const [source, setSource] = useState<'camera' | 'screen'>('camera')
   const [live, setLive] = useState(false)
   const [error, setError] = useState('')
+  const [rtmpUrl, setRtmpUrl] = useState('')
+  const [streamKey, setStreamKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [copied, setCopied] = useState('')
   const previewRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
@@ -28,22 +35,37 @@ export function GoLive() {
     onLeft: (p: { viewerId: string }) => void
   } | null>(null)
 
+  const obsLive = !!user && streams.some((s) => s.username === user.username && s.source === 'rtmp')
+
   useEffect(() => {
     return () => stopAll()
   }, [])
 
+  useEffect(() => {
+    if (!user) return
+    api
+      .ingest()
+      .then((res) => {
+        setRtmpUrl(res.rtmpUrl)
+        setStreamKey(res.streamKey)
+        setTitle(res.title)
+        setCategory(res.category)
+      })
+      .catch(() => {})
+  }, [user])
+
   async function getMedia() {
     streamRef.current?.getTracks().forEach((t) => t.stop())
-    const stream =
+    const media =
       source === 'camera'
         ? await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         : await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-    streamRef.current = stream
+    streamRef.current = media
     if (previewRef.current) {
-      previewRef.current.srcObject = stream
+      previewRef.current.srcObject = media
       await previewRef.current.play().catch(() => {})
     }
-    return stream
+    return media
   }
 
   function detachSignaling() {
@@ -120,11 +142,35 @@ export function GoLive() {
     }
   }
 
+  async function saveObsSettings() {
+    setError('')
+    try {
+      const res = await api.saveIngest(title, category)
+      setRtmpUrl(res.rtmpUrl)
+      setStreamKey(res.streamKey)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save stream info.')
+    }
+  }
+
+  async function rotate() {
+    if (!confirm('This disconnects any OBS session using the old key. Continue?')) return
+    const res = await api.rotateKey()
+    setStreamKey(res.streamKey)
+    setRtmpUrl(res.rtmpUrl)
+  }
+
+  async function copy(label: string, value: string) {
+    await navigator.clipboard.writeText(value)
+    setCopied(label)
+    setTimeout(() => setCopied(''), 1200)
+  }
+
   if (!user) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8 text-center">
         <h1 className="text-2xl font-bold">Go live on VOLT</h1>
-        <p className="mt-2 text-mute">Create an account, then stream from your camera or screen — no OBS required.</p>
+        <p className="mt-2 text-mute">Create an account, then stream from your camera, screen, or OBS.</p>
         <div className="mt-5 flex gap-3">
           <button onClick={() => setAuth('login')} className="rounded-md px-4 py-2 font-semibold hover:bg-hover">
             Log In
@@ -146,8 +192,12 @@ export function GoLive() {
       <div className="min-w-0 flex-1 overflow-y-auto p-6">
         <h1 className="text-2xl font-bold">Creator dashboard</h1>
         <p className="mt-1 text-sm text-mute">
-          Channel: <Link to={`/${user.username}`} className="text-volt hover:underline">volt.live/{user.username}</Link>
+          Channel:{' '}
+          <Link to={`/${user.username}`} className="text-volt hover:underline">
+            volt.live/{user.username}
+          </Link>
         </p>
+
         <div className="mt-5 overflow-hidden rounded-lg bg-black">
           <video ref={previewRef} muted playsInline className="aspect-video w-full object-contain" />
         </div>
@@ -208,18 +258,99 @@ export function GoLive() {
                 <Square size={14} /> End stream
               </button>
             )}
-            {live && (
-              <button type="button" onClick={() => navigate(`/${user.username}`)} className="rounded-md bg-raised px-4 py-2 text-sm font-semibold hover:bg-hover">
+            {(live || obsLive) && (
+              <button
+                type="button"
+                onClick={() => navigate(`/${user.username}`)}
+                className="rounded-md bg-raised px-4 py-2 text-sm font-semibold hover:bg-hover"
+              >
                 Open channel
               </button>
             )}
           </div>
         </form>
+
+        <section className="mt-8 rounded-xl border border-line bg-raised p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-bold">
+              <Cast size={18} className="text-volt" /> Stream with OBS / RTMP
+            </h2>
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                obsLive ? 'bg-volt text-black' : 'bg-ink text-mute'
+              }`}
+            >
+              {obsLive ? 'LIVE FROM OBS' : 'OFFLINE'}
+            </span>
+          </div>
+          <p className="mt-2 text-sm text-mute">
+            Use these settings in OBS or Streamlabs. Paste them under Settings → Stream → Service: Custom.
+          </p>
+          <div className="mt-4 grid gap-3">
+            <label className="block text-sm text-mute">
+              Server
+              <div className="mt-1 flex gap-2">
+                <input
+                  readOnly
+                  value={rtmpUrl || 'rtmp://localhost:1935/live'}
+                  className="w-full rounded-md border border-line bg-ink px-3 py-2 font-mono text-sm text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => copy('server', rtmpUrl || 'rtmp://localhost:1935/live')}
+                  className="rounded-md bg-hover px-3 hover:bg-line"
+                  title="Copy server"
+                >
+                  <Copy size={16} />
+                </button>
+              </div>
+            </label>
+            <label className="block text-sm text-mute">
+              Stream key
+              <div className="mt-1 flex gap-2">
+                <input
+                  readOnly
+                  type={showKey ? 'text' : 'password'}
+                  value={streamKey}
+                  placeholder="Loading…"
+                  className="w-full rounded-md border border-line bg-ink px-3 py-2 font-mono text-sm text-white"
+                />
+                <button type="button" onClick={() => setShowKey((v) => !v)} className="rounded-md bg-hover px-3 hover:bg-line">
+                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copy('key', streamKey)}
+                  className="rounded-md bg-hover px-3 hover:bg-line"
+                >
+                  <Copy size={16} />
+                </button>
+                <button type="button" onClick={rotate} className="rounded-md bg-hover px-3 hover:bg-line" title="Reset key">
+                  <RefreshCw size={16} />
+                </button>
+              </div>
+            </label>
+          </div>
+          {copied && <p className="mt-2 text-xs text-volt">Copied {copied}</p>}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={saveObsSettings}
+              className="rounded-md bg-ink px-3 py-2 text-sm font-semibold hover:bg-hover"
+            >
+              Save title for OBS
+            </button>
+            {obsLive && (
+              <span className="text-sm text-volt">Receiving your OBS feed. Viewers can watch the channel.</span>
+            )}
+          </div>
+          <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-mute">
+            <li>Copy the server URL and stream key above.</li>
+            <li>OBS → Settings → Stream → Service: Custom → paste both → Apply.</li>
+            <li>Click Start Streaming in OBS. This page switches to LIVE FROM OBS.</li>
+          </ol>
+        </section>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
-        <p className="mt-4 text-xs text-mute">
-          Open your channel in another tab or on another device to watch the WebRTC broadcast. Catalog channels on the
-          homepage play demo videos so the grid feels full from the first load.
-        </p>
       </div>
       <Chat slug={user.username} simulated={false} />
     </div>

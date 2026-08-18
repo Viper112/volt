@@ -39,6 +39,7 @@ export function Watch() {
   const pcRef = useRef<RTCPeerConnection | null>(null)
 
   const isWebrtc = stream?.source === 'webrtc'
+  const isRtmp = stream?.source === 'rtmp'
   const isLive = !!stream
   const isOwn = user?.username === slug
 
@@ -118,6 +119,7 @@ export function Watch() {
               src={isWebrtc ? undefined : stream.videoUrl}
               poster={stream.thumbnail}
               stream={isWebrtc ? remote : null}
+              format={isRtmp ? 'flv' : 'file'}
             />
             {isWebrtc && !remote && (
               <div className="absolute inset-0 grid place-items-center bg-black/70 text-sm text-mute">
@@ -212,7 +214,7 @@ export function Watch() {
           </section>
         </div>
       </div>
-      <Chat slug={slug} simulated={!isWebrtc} />
+      <Chat slug={slug} simulated={!isWebrtc && !isRtmp} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} onSwitch={setAuth} />}
     </div>
   )
