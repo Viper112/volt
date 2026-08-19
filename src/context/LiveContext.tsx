@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { streams as catalogStreams } from '../data/catalog'
 import { api } from '../lib/api'
 import { getSocket } from '../lib/socket'
 import type { Stream } from '../types'
@@ -10,12 +9,6 @@ type LiveContextValue = {
 }
 
 const LiveContext = createContext<LiveContextValue | null>(null)
-
-function merge(live: Stream[]) {
-  const liveNames = new Set(live.map((s) => s.username.toLowerCase()))
-  const rest = catalogStreams.filter((s) => !liveNames.has(s.username.toLowerCase()))
-  return [...live, ...rest].sort((a, b) => b.viewers - a.viewers)
-}
 
 export function LiveProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<Stream[]>([])
@@ -31,10 +24,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(() => {
-    const streams = merge(live)
+    const streams = [...live].sort((a, b) => b.viewers - a.viewers)
     return {
       streams,
-      liveUsernames: new Set(streams.filter((s) => s.source === 'webrtc').map((s) => s.username.toLowerCase())),
+      liveUsernames: new Set(streams.map((s) => s.username.toLowerCase())),
     }
   }, [live])
 

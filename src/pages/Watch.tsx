@@ -214,7 +214,7 @@ export function Watch() {
           </section>
         </div>
       </div>
-      <Chat slug={slug} simulated={!isWebrtc && !isRtmp} />
+      <Chat slug={slug} />
       {auth && <AuthModal mode={auth} onClose={() => setAuth(null)} onSwitch={setAuth} />}
     </div>
   )

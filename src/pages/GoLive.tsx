@@ -364,7 +364,7 @@ export function GoLive() {
         </section>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
       </div>
-      <Chat slug={user.username} simulated={false} />
+      <Chat slug={user.username} />
     </div>
   )
 }

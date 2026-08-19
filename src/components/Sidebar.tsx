@@ -53,7 +53,8 @@ export function Sidebar() {
       </nav>
       {open && <div className="mt-4 px-4 text-[11px] font-bold uppercase tracking-wider text-mute">Recommended</div>}
       <div className="mt-1 flex-1 overflow-y-auto">
-        {recommended.map((s) => {
+        {recommended.length ? (
+          recommended.map((s) => {
           const streamer = streamerByUsername(s.username)
           return (
             <NavLink
@@ -81,8 +82,11 @@ export function Sidebar() {
               )}
             </NavLink>
           )
-        })}
-        {open && (
+        })
+        ) : (
+          open && <p className="px-4 py-2 text-[13px] text-mute">No live channels yet.</p>
+        )}
+        {open && recommended.length > 10 && (
           <button
             onClick={() => setShowAll((v) => !v)}
             className="w-full px-3 py-2 text-left text-[13px] font-medium text-mute hover:text-white"

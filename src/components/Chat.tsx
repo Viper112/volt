@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { ChevronLeft, Send, Smile } from 'lucide-react'
-import { chatPool } from '../data/catalog'
-import { colorForName, uid } from '../lib/format'
+import { colorForName } from '../lib/format'
 import { getSocket } from '../lib/socket'
 import { useAuth } from '../context/AuthContext'
 import type { ChatMessage } from '../types'
 
-export function Chat({ slug, simulated = true }: { slug: string; simulated?: boolean }) {
+export function Chat({ slug }: { slug: string }) {
   const { user } = useAuth()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [text, setText] = useState('')
@@ -24,21 +23,6 @@ export function Chat({ slug, simulated = true }: { slug: string; simulated?: boo
       socket.off('chat:message', onMessage)
     }
   }, [slug])
-
-  useEffect(() => {
-    if (!simulated) return
-    const tick = () => {
-      const username = chatPool.users[Math.floor(Math.random() * chatPool.users.length)]
-      const line = chatPool.lines[Math.floor(Math.random() * chatPool.lines.length)]
-      setMessages((m) => [
-        ...m.slice(-200),
-        { id: uid(), username, text: line, ts: Date.now(), color: colorForName(username) },
-      ])
-    }
-    tick()
-    const t = setInterval(tick, 1400 + Math.random() * 1600)
-    return () => clearInterval(t)
-  }, [slug, simulated])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })

@@ -14,7 +14,18 @@ export function Home() {
 
   return (
     <div className="px-6 py-5">
-      <FeaturedCarousel streams={streams} />
+      {streams.length ? (
+        <FeaturedCarousel streams={streams} />
+      ) : (
+        <div className="rounded-lg border border-line bg-raised px-6 py-16 text-center">
+          <h1 className="text-2xl font-bold">Nobody is live yet</h1>
+          <p className="mt-2 text-mute">When creators go live, they show up here. Be the first.</p>
+          <Link to="/go-live" className="mt-5 inline-block rounded-md bg-volt px-4 py-2 font-bold text-black hover:bg-volt-dim">
+            Go live
+          </Link>
+        </div>
+      )}
+      {!!liveCats.length && (
       <section className="mt-8">
         <div className="mb-3 flex items-end justify-between">
           <h2 className="text-lg font-bold">Top Live Categories</h2>
@@ -30,6 +41,7 @@ export function Home() {
           ))}
         </div>
       </section>
+      )}
       {liveCats.map((c) => (
         <StreamRow
           key={c.slug}

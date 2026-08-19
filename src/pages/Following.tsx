@@ -3,7 +3,7 @@ import { StreamCard } from '../components/StreamCard'
 import { AuthModal } from '../components/AuthModal'
 import { useAuth } from '../context/AuthContext'
 import { useLive } from '../context/LiveContext'
-import { avatarUrl, streamers } from '../data/catalog'
+import { avatarUrl } from '../data/catalog'
 import { Link } from 'react-router-dom'
 
 export function Following() {
@@ -36,9 +36,7 @@ export function Following() {
 
   const following = user.following
   const live = streams.filter((s) => following.includes(s.username.toLowerCase()))
-  const offline = streamers.filter(
-    (s) => following.includes(s.username.toLowerCase()) && !live.some((l) => l.username === s.username),
-  )
+  const offline = following.filter((name) => !live.some((l) => l.username.toLowerCase() === name))
 
   return (
     <div className="px-6 py-5">
@@ -57,12 +55,12 @@ export function Following() {
         <>
           <h2 className="mt-10 text-lg font-bold">Offline</h2>
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-            {offline.map((s) => (
-              <Link key={s.username} to={`/${s.username}`} className="flex items-center gap-3 rounded-md p-2 hover:bg-hover">
-                <img src={avatarUrl(s.seed)} alt="" className="h-12 w-12 rounded-full grayscale" />
+            {offline.map((name) => (
+              <Link key={name} to={`/${name}`} className="flex items-center gap-3 rounded-md p-2 hover:bg-hover">
+                <img src={avatarUrl(name)} alt="" className="h-12 w-12 rounded-full grayscale" />
                 <div>
-                  <div className="font-semibold">{s.displayName}</div>
-                  <div className="text-xs text-mute">{s.username}</div>
+                  <div className="font-semibold">{name}</div>
+                  <div className="text-xs text-mute">{name}</div>
                 </div>
               </Link>
             ))}

@@ -76,6 +76,7 @@ export function Browse() {
               <StreamCard key={s.id} stream={s} />
             ))}
           </div>
+          {!list.length && <p className="mt-6 text-mute">No one is live right now.</p>}
         </>
       )}
 
@@ -88,22 +89,28 @@ export function Browse() {
       )}
 
       {tab === 'clips' && (
-        <div className="mt-5 grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4">
-          {clips.map((c) => (
-            <Link key={c.id} to={`/${c.username}`} className="group">
-              <div className="relative overflow-hidden rounded-md bg-raised">
-                <img src={c.thumbnail} alt="" className="aspect-video w-full object-cover group-hover:scale-[1.03]" />
-                <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 text-xs">
-                  {formatViewers(c.views)} views
-                </span>
-                <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs">{c.duration}</span>
-              </div>
-              <div className="mt-2 text-sm font-semibold group-hover:text-volt">{c.title}</div>
-              <div className="text-xs text-mute">
-                {c.username} · {c.createdAt}
-              </div>
-            </Link>
-          ))}
+        <div className="mt-5">
+          {clips.length ? (
+            <div className="grid grid-cols-2 gap-5 md:grid-cols-3 lg:grid-cols-4">
+              {clips.map((c) => (
+                <Link key={c.id} to={`/${c.username}`} className="group">
+                  <div className="relative overflow-hidden rounded-md bg-raised">
+                    <img src={c.thumbnail} alt="" className="aspect-video w-full object-cover group-hover:scale-[1.03]" />
+                    <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 text-xs">
+                      {formatViewers(c.views)} views
+                    </span>
+                    <span className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-xs">{c.duration}</span>
+                  </div>
+                  <div className="mt-2 text-sm font-semibold group-hover:text-volt">{c.title}</div>
+                  <div className="text-xs text-mute">
+                    {c.username} · {c.createdAt}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="text-mute">No clips yet.</p>
+          )}
         </div>
       )}
     </div>
