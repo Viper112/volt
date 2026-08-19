@@ -177,8 +177,8 @@ function publicProto(req) {
 function ingestPayload(req, user) {
   const origin = `${publicProto(req)}://${publicHost(req)}`
   return {
-    rtmpUrl: `${origin}/api/whip`,
-    whipUrl: `${origin}/api/whip`,
+    whipUrl: `${origin}/api/whip/${encodeURIComponent(user.streamKey)}`,
+    rtmpUrl: `${origin}/api/whip/${encodeURIComponent(user.streamKey)}`,
     streamKey: user.streamKey,
     playbackUrl: `/playback/${user.username}.flv`,
     title: ingestMeta.get(user.username)?.title || 'Live on VOLT',

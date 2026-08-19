@@ -35,7 +35,9 @@ export function GoLive() {
   } | null>(null)
 
   const obsLive = !!user && streams.some((s) => s.username === user.username && (s.source === 'rtmp' || s.source === 'whip'))
-  const serverUrl = `${window.location.origin}/api/whip`
+  const serverUrl = streamKey
+    ? `${window.location.origin}/api/whip/${encodeURIComponent(streamKey)}`
+    : `${window.location.origin}/api/whip`
 
   useEffect(() => {
     return () => stopAll()
@@ -284,8 +286,12 @@ export function GoLive() {
             </span>
           </div>
           <p className="mt-2 text-sm text-mute">
-            OBS 30+ → Settings → Stream → Service: <span className="text-white">WHIP</span>. Use this public server URL
-            and paste your stream key as the bearer token.
+            OBS will fail if Service is still <span className="text-white">Custom</span> (RTMP). Set Service to{' '}
+            <span className="text-white">WHIP</span>, then paste the values below.
+          </p>
+          <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            Open this live website in a browser first (so the host is awake), then in OBS: Settings → Stream → Service:{' '}
+            <strong className="text-white">WHIP</strong> → Server + Bearer token → Apply → Start Streaming.
           </p>
           <div className="mt-4 grid gap-3">
             <label className="block text-sm text-mute">
@@ -308,7 +314,7 @@ export function GoLive() {
               </div>
             </label>
             <label className="block text-sm text-mute">
-              Stream key
+              Bearer token (stream key)
               <div className="mt-1 flex gap-2">
                 <input
                   readOnly
@@ -347,9 +353,9 @@ export function GoLive() {
             )}
           </div>
           <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-mute">
-            <li>Copy the server URL (https://your-site/api/whip) and stream key above.</li>
-            <li>OBS → Settings → Stream → Service: WHIP → paste the server URL and stream key → Apply.</li>
-            <li>Click Start Streaming in OBS. This page switches to LIVE FROM OBS.</li>
+            <li>In OBS, Service must be WHIP — not Custom, not Twitch, not YouTube.</li>
+            <li>Paste Server and Bearer token, click Apply, then Start Streaming.</li>
+            <li>This page switches to LIVE FROM OBS when the ingest connects.</li>
           </ol>
         </section>
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
