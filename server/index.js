@@ -9,6 +9,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { startRtmpServer } from './media.js'
+import { createWhipHub } from './whip.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3001
@@ -158,25 +159,31 @@ app.get('/api/live', (_req, res) => {
   res.json({ streams: liveList() })
 })
 
-function ingestHost(req) {
-  if (process.env.RTMP_HOST) return process.env.RTMP_HOST
+function publicHost(req) {
+  if (process.env.PUBLIC_HOST) return process.env.PUBLIC_HOST.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  if (process.env.RENDER_EXTERNAL_HOSTNAME) return process.env.RENDER_EXTERNAL_HOSTNAME
   const xf = req.headers['x-forwarded-host']
-  if (xf) return String(xf).split(',')[0].replace(/:\d+$/, '')
-  // OBS on Windows often times out on "localhost" (::1). Force IPv4.
-  const host = req.hostname || '127.0.0.1'
-  if (host === 'localhost' || host === '::1') return '127.0.0.1'
-  return host
+  if (xf) return String(xf).split(',')[0].trim()
+  return String(req.headers.host || req.get?.('host') || 'localhost:3001')
+}
+
+function publicProto(req) {
+  if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.NODE_ENV === 'production') return 'https'
+  const xf = String(req.headers['x-forwarded-proto'] || '')
+  if (xf) return xf.split(',')[0].trim()
+  return req.protocol || 'http'
 }
 
 function ingestPayload(req, user) {
-  const host = ingestHost(req)
+  const origin = `${publicProto(req)}://${publicHost(req)}`
   return {
-    rtmpUrl: `rtmp://${host}:${RTMP_PORT}/live`,
+    rtmpUrl: `${origin}/api/whip`,
+    whipUrl: `${origin}/api/whip`,
     streamKey: user.streamKey,
     playbackUrl: `/playback/${user.username}.flv`,
     title: ingestMeta.get(user.username)?.title || 'Live on VOLT',
     category: ingestMeta.get(user.username)?.category || 'just-chatting',
-    live: liveStreams.get(user.username)?.source === 'rtmp',
+    live: ['rtmp', 'whip'].includes(liveStreams.get(user.username)?.source),
   }
 }
 
@@ -271,6 +278,42 @@ function endRtmpLive(user) {
   broadcastLive()
 }
 
+function setWhipLive(user) {
+  const meta = ingestMeta.get(user.username) || {}
+  liveStreams.set(user.username, {
+    id: `live-${user.username}`,
+    username: user.username,
+    title: meta.title || 'Live on VOLT',
+    category: meta.category || 'just-chatting',
+    language: 'English',
+    mature: false,
+    viewers: liveStreams.get(user.username)?.viewers || 0,
+    thumbnail: '',
+    videoUrl: '',
+    tags: ['English', 'OBS'],
+    featured: true,
+    source: 'whip',
+  })
+  broadcastLive()
+}
+
+function endWhipLive(user) {
+  const current = liveStreams.get(user.username)
+  if (!current || current.source !== 'whip') return
+  if (hostSockets.has(user.username)) return
+  liveStreams.delete(user.username)
+  io.to(`watch:${user.username}`).emit('live:ended')
+  broadcastLive()
+}
+
+const whip = createWhipHub({
+  io,
+  getUserByKey: (key) => users.find((u) => u.streamKey && u.streamKey === key) || null,
+  onPublish: setWhipLive,
+  onUnpublish: endWhipLive,
+})
+whip.attach(app)
+
 try {
   startRtmpServer({
     rtmpPort: RTMP_PORT,
@@ -363,7 +406,9 @@ io.on('connection', (socket) => {
       broadcastLive()
     }
     const hostId = hostSockets.get(username)
-    if (hostId) {
+    if (whip.hasPublisher(username)) {
+      whip.addViewer(username, socket.id).catch(() => {})
+    } else if (hostId) {
       io.to(hostId).emit('viewer:joined', { viewerId: socket.id })
     }
   })
@@ -379,7 +424,8 @@ io.on('connection', (socket) => {
       broadcastLive()
     }
     const hostId = hostSockets.get(username)
-    if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
+    if (whip.hasPublisher(username)) whip.removeViewer(username, socket.id)
+    else if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
     socket.data.watching = null
   })
 
@@ -388,16 +434,28 @@ io.on('connection', (socket) => {
   })
 
   socket.on('webrtc:answer', ({ to, sdp }) => {
+    if (typeof to === 'string' && to.startsWith('sfu:')) {
+      whip.handleAnswer(to.slice(4), socket.id, sdp).catch(() => {})
+      return
+    }
     if (to) io.to(to).emit('webrtc:answer', { from: socket.id, sdp })
   })
 
   socket.on('webrtc:ice', ({ to, candidate }) => {
+    if (typeof to === 'string' && to.startsWith('sfu:')) {
+      whip.handleIce(to.slice(4), socket.id, candidate).catch(() => {})
+      return
+    }
     if (to) io.to(to).emit('webrtc:ice', { from: socket.id, candidate })
   })
 
   socket.on('live:stop', () => {
     const username = socket.data.liveUsername
     if (!username) return
+    if (whip.hasPublisher(username)) {
+      socket.data.liveUsername = null
+      return
+    }
     const current = liveStreams.get(username)
     if (current && current.source !== 'webrtc') {
       socket.data.liveUsername = null
@@ -419,15 +477,20 @@ io.on('connection', (socket) => {
         liveStreams.set(watching, stream)
       }
       const hostId = hostSockets.get(watching)
-      if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
+      if (whip.hasPublisher(watching)) whip.removeViewer(watching, socket.id)
+      else if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
     }
     const username = socket.data.liveUsername
     if (username) {
-      const current = liveStreams.get(username)
-      if (!current || current.source === 'webrtc') {
-        liveStreams.delete(username)
-        hostSockets.delete(username)
-        io.to(`watch:${username}`).emit('live:ended')
+      if (whip.hasPublisher(username)) {
+        socket.data.liveUsername = null
+      } else {
+        const current = liveStreams.get(username)
+        if (!current || current.source === 'webrtc') {
+          liveStreams.delete(username)
+          hostSockets.delete(username)
+          io.to(`watch:${username}`).emit('live:ended')
+        }
       }
     }
     broadcastLive()

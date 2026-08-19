@@ -7,9 +7,8 @@ import { useAuth } from '../context/AuthContext'
 import { useLive } from '../context/LiveContext'
 import { categories } from '../data/catalog'
 import { api } from '../lib/api'
+import { ice } from '../lib/ice'
 import { getSocket } from '../lib/socket'
-
-const ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 
 export function GoLive() {
   const { user } = useAuth()
@@ -35,9 +34,8 @@ export function GoLive() {
     onLeft: (p: { viewerId: string }) => void
   } | null>(null)
 
-  const obsLive = !!user && streams.some((s) => s.username === user.username && s.source === 'rtmp')
-  const localRtmp = 'rtmp://127.0.0.1:1935/live'
-  const rtmpHosted = rtmpUrl && !/127\.0\.0\.1|localhost/i.test(rtmpUrl)
+  const obsLive = !!user && streams.some((s) => s.username === user.username && (s.source === 'rtmp' || s.source === 'whip'))
+  const serverUrl = `${window.location.origin}/api/whip`
 
   useEffect(() => {
     return () => stopAll()
@@ -48,7 +46,7 @@ export function GoLive() {
     api
       .ingest()
       .then((res) => {
-        setRtmpUrl(res.rtmpUrl)
+        setRtmpUrl(res.whipUrl || res.rtmpUrl)
         setStreamKey(res.streamKey)
         setTitle(res.title)
         setCategory(res.category)
@@ -148,7 +146,7 @@ export function GoLive() {
     setError('')
     try {
       const res = await api.saveIngest(title, category)
-      setRtmpUrl(res.rtmpUrl)
+      setRtmpUrl(res.whipUrl || res.rtmpUrl)
       setStreamKey(res.streamKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save stream info.')
@@ -159,7 +157,7 @@ export function GoLive() {
     if (!confirm('This disconnects any OBS session using the old key. Continue?')) return
     const res = await api.rotateKey()
     setStreamKey(res.streamKey)
-    setRtmpUrl(res.rtmpUrl)
+    setRtmpUrl(res.whipUrl || res.rtmpUrl)
   }
 
   async function copy(label: string, value: string) {
@@ -275,7 +273,7 @@ export function GoLive() {
         <section className="mt-8 rounded-xl border border-line bg-raised p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-lg font-bold">
-              <Cast size={18} className="text-volt" /> Stream with OBS / RTMP
+              <Cast size={18} className="text-volt" /> Stream with OBS
             </h2>
             <span
               className={`rounded-full px-2.5 py-1 text-xs font-bold ${
@@ -286,30 +284,22 @@ export function GoLive() {
             </span>
           </div>
           <p className="mt-2 text-sm text-mute">
-            Use these settings in OBS or Streamlabs. Paste them under Settings → Stream → Service: Custom.
+            OBS 30+ → Settings → Stream → Service: <span className="text-white">WHIP</span>. Use this public server URL
+            and paste your stream key as the bearer token.
           </p>
-          {rtmpHosted && (
-            <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-              Render does not open RTMP port 1935, so OBS will time out against this public URL. On this PC run{' '}
-              <code className="text-white">npm run dev</code>, open{' '}
-              <a className="text-volt underline" href="http://localhost:5173/go-live">
-                localhost:5173/go-live
-              </a>
-              , and set OBS Server to <code className="text-white">{localRtmp}</code>.
-            </p>
-          )}
           <div className="mt-4 grid gap-3">
             <label className="block text-sm text-mute">
               Server
               <div className="mt-1 flex gap-2">
                 <input
                   readOnly
-                  value={rtmpUrl || localRtmp}
+                  value={serverUrl}
+                  placeholder="Loading…"
                   className="w-full rounded-md border border-line bg-ink px-3 py-2 font-mono text-sm text-white"
                 />
                 <button
                   type="button"
-                  onClick={() => copy('server', rtmpUrl || localRtmp)}
+                  onClick={() => copy('server', serverUrl)}
                   className="rounded-md bg-hover px-3 hover:bg-line"
                   title="Copy server"
                 >
@@ -357,8 +347,8 @@ export function GoLive() {
             )}
           </div>
           <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-mute">
-            <li>Copy the server URL and stream key above.</li>
-            <li>OBS → Settings → Stream → Service: Custom → paste both → Apply.</li>
+            <li>Copy the server URL (https://your-site/api/whip) and stream key above.</li>
+            <li>OBS → Settings → Stream → Service: WHIP → paste the server URL and stream key → Apply.</li>
             <li>Click Start Streaming in OBS. This page switches to LIVE FROM OBS.</li>
           </ol>
         </section>

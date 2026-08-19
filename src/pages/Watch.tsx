@@ -9,9 +9,8 @@ import { useLive } from '../context/LiveContext'
 import { avatarUrl, streamerByUsername, categoryName } from '../data/catalog'
 import { formatFollowers, formatViewers } from '../lib/format'
 import { getSocket } from '../lib/socket'
+import { ice } from '../lib/ice'
 import type { Streamer } from '../types'
-
-const ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
 
 function fallbackStreamer(username: string): Streamer {
   return {
@@ -38,7 +37,7 @@ export function Watch() {
   const [copied, setCopied] = useState(false)
   const pcRef = useRef<RTCPeerConnection | null>(null)
 
-  const isWebrtc = stream?.source === 'webrtc'
+  const isWebrtc = stream?.source === 'webrtc' || stream?.source === 'whip'
   const isRtmp = stream?.source === 'rtmp'
   const isLive = !!stream
   const isOwn = user?.username === slug

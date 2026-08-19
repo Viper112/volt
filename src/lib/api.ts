@@ -42,6 +42,7 @@ export const api = {
   ingest: () =>
     request<{
       rtmpUrl: string
+      whipUrl: string
       streamKey: string
       playbackUrl: string
       title: string
@@ -51,6 +52,7 @@ export const api = {
   saveIngest: (title: string, category: string) =>
     request<{
       rtmpUrl: string
+      whipUrl: string
       streamKey: string
       playbackUrl: string
       title: string
@@ -61,5 +63,5 @@ export const api = {
       body: JSON.stringify({ title, category }),
     }),
   rotateKey: () =>
-    request<{ streamKey: string; rtmpUrl: string }>('/api/ingest/rotate', { method: 'POST' }),
+    request<{ streamKey: string; rtmpUrl: string; whipUrl: string }>('/api/ingest/rotate', { method: 'POST' }),
 }
