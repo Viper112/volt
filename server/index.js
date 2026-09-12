@@ -8,66 +8,74 @@ import bcrypt from 'bcryptjs'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { startRtmpServer } from './media.js'
-import { createWhipHub } from './whip.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 3001
-const JWT_SECRET = process.env.JWT_SECRET || 'volt-dev-secret'
+const JWT_SECRET = process.env.JWT_SECRET || 'wardogs-dev-secret'
+const INVITE_CODE = (process.env.INVITE_CODE || 'WARDOGS').toUpperCase()
 const USERS_FILE = path.join(__dirname, 'users.json')
-const RTMP_PORT = process.env.RTMP_PORT || 1935
-const NMS_HTTP_PORT = process.env.NMS_HTTP_PORT || 8000
+const MESSAGES_FILE = path.join(__dirname, 'messages.json')
+const DATA_DIR = path.join(__dirname, '..', 'dist')
 
-const ingestMeta = new Map()
-
-function makeStreamKey() {
-  return crypto.randomBytes(18).toString('base64url')
-}
+const CHANNELS = [
+  { id: 'announcements', name: 'announcements', topic: 'Pack-wide orders. Keep it clear.', category: 'Command' },
+  { id: 'general', name: 'general', topic: 'The main hangout. Say what\'s up.', category: 'Command' },
+  { id: 'ops', name: 'ops', topic: 'Plans, raids, and coordination.', category: 'Command' },
+  { id: 'barracks', name: 'barracks', topic: 'Late-night chaos and pack banter.', category: 'Down time' },
+  { id: 'clips', name: 'clips', topic: 'Drop highlights and war stories.', category: 'Down time' },
+  { id: 'music', name: 'music', topic: 'What\'s playing in the kennel.', category: 'Down time' },
+]
 
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '32kb' }))
 
 const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: '*' } })
 
-function loadUsers() {
+function loadJson(file, fallback) {
   try {
-    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'))
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
   } catch {
-    return []
+    return fallback
   }
 }
 
-function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
+function saveJson(file, data) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
 }
 
-let users = loadUsers()
+let users = loadJson(USERS_FILE, [])
+let messagesByChannel = loadJson(MESSAGES_FILE, {})
+
+for (const ch of CHANNELS) {
+  if (!Array.isArray(messagesByChannel[ch.id])) messagesByChannel[ch.id] = []
+}
+
 if (!users.find((u) => u.username === 'demo')) {
   users.push({
     id: 'demo',
     username: 'demo',
-    displayName: 'Demo',
+    displayName: 'Alpha Demo',
     passwordHash: bcrypt.hashSync('demo123', 8),
-    following: ['nova', 'luna', 'kira'],
-    streamKey: makeStreamKey(),
+    status: 'online',
+    createdAt: Date.now(),
   })
-  saveUsers(users)
+  saveJson(USERS_FILE, users)
 }
-let changedKeys = false
-for (const u of users) {
-  if (!u.streamKey) {
-    u.streamKey = makeStreamKey()
-    changedKeys = true
+
+const online = new Map() // userId -> { socketIds: Set, status }
+
+function publicUser(u, presence) {
+  return {
+    id: u.id,
+    username: u.username,
+    displayName: u.displayName,
+    status: presence?.status || (online.has(u.id) ? 'online' : 'offline'),
   }
 }
-if (changedKeys) saveUsers(users)
 
-const liveStreams = new Map()
-const hostSockets = new Map()
-
-function authUser(req) {
+function authFromHeader(req) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return null
@@ -79,424 +87,233 @@ function authUser(req) {
   }
 }
 
-function publicUser(u) {
-  return {
-    id: u.id,
-    username: u.username,
-    displayName: u.displayName,
-    following: u.following,
-  }
+function signToken(user) {
+  return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' })
 }
 
-function liveList() {
-  return [...liveStreams.values()]
+function presenceList() {
+  return users.map((u) => publicUser(u, online.get(u.id))).sort((a, b) => {
+    const rank = { online: 0, idle: 1, dnd: 2, offline: 3 }
+    const d = (rank[a.status] ?? 9) - (rank[b.status] ?? 9)
+    if (d !== 0) return d
+    return a.displayName.localeCompare(b.displayName)
+  })
 }
 
-function broadcastLive() {
-  io.emit('live:update', { streams: liveList() })
+function broadcastPresence() {
+  io.emit('presence:update', { members: presenceList() })
 }
 
-app.post('/api/auth/register', (req, res) => {
+function sanitizeText(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 2000)
+}
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, name: 'War Dogs' })
+})
+
+app.get('/api/meta', (_req, res) => {
+  res.json({
+    name: 'War Dogs',
+    tagline: 'Private pack chat for the crew',
+    inviteHint: 'Ask a dog for the invite code',
+    channels: CHANNELS,
+  })
+})
+
+app.post('/api/auth/register', async (req, res) => {
   const username = String(req.body.username || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 20)
+  const displayName = String(req.body.displayName || username).trim().slice(0, 32)
   const password = String(req.body.password || '')
-  if (username.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters.' })
-  if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters.' })
-  if (users.find((u) => u.username === username)) return res.status(400).json({ error: 'Username is taken.' })
+  const invite = String(req.body.invite || '').trim().toUpperCase()
+
+  if (!username || username.length < 2) {
+    return res.status(400).json({ error: 'Username needs at least 2 characters.' })
+  }
+  if (password.length < 4) {
+    return res.status(400).json({ error: 'Password needs at least 4 characters.' })
+  }
+  if (invite !== INVITE_CODE) {
+    return res.status(403).json({ error: 'Wrong invite code. Pack only.' })
+  }
+  if (users.find((u) => u.username === username)) {
+    return res.status(409).json({ error: 'That callsign is taken.' })
+  }
+
   const user = {
-    id: `${Date.now()}`,
+    id: crypto.randomUUID(),
     username,
-    displayName: username,
-    passwordHash: bcrypt.hashSync(password, 8),
-    following: [],
-    streamKey: makeStreamKey(),
+    displayName: displayName || username,
+    passwordHash: await bcrypt.hash(password, 8),
+    status: 'online',
+    createdAt: Date.now(),
   }
   users.push(user)
-  saveUsers(users)
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '14d' })
-  res.json({ token, user: publicUser(user) })
+  saveJson(USERS_FILE, users)
+
+  const token = signToken(user)
+  res.json({ token, user: publicUser(user, { status: 'online' }) })
 })
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const username = String(req.body.username || '').trim().toLowerCase()
   const password = String(req.body.password || '')
   const user = users.find((u) => u.username === username)
-  if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
-    return res.status(401).json({ error: 'Invalid username or password.' })
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    return res.status(401).json({ error: 'Bad callsign or password.' })
   }
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '14d' })
-  res.json({ token, user: publicUser(user) })
+  const token = signToken(user)
+  res.json({ token, user: publicUser(user, online.get(user.id) || { status: 'online' }) })
 })
 
-app.get('/api/me', (req, res) => {
-  const user = authUser(req)
+app.get('/api/auth/me', (req, res) => {
+  const user = authFromHeader(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  res.json({ user: publicUser(user) })
+  res.json({ user: publicUser(user, online.get(user.id)) })
 })
 
-app.post('/api/follow/:username', (req, res) => {
-  const user = authUser(req)
+app.get('/api/channels', (req, res) => {
+  const user = authFromHeader(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  const name = String(req.params.username).toLowerCase()
-  if (name === user.username) return res.status(400).json({ error: 'You cannot follow yourself.' })
-  if (!user.following.includes(name)) user.following.push(name)
-  saveUsers(users)
-  res.json({ following: user.following })
+  res.json({ channels: CHANNELS })
 })
 
-app.delete('/api/follow/:username', (req, res) => {
-  const user = authUser(req)
+app.get('/api/channels/:id/messages', (req, res) => {
+  const user = authFromHeader(req)
   if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  const name = String(req.params.username).toLowerCase()
-  user.following = user.following.filter((u) => u !== name)
-  saveUsers(users)
-  res.json({ following: user.following })
+  const channel = CHANNELS.find((c) => c.id === req.params.id)
+  if (!channel) return res.status(404).json({ error: 'Channel not found' })
+  const list = messagesByChannel[channel.id] || []
+  res.json({ messages: list.slice(-200) })
 })
 
-app.get('/api/live', (_req, res) => {
-  res.json({ streams: liveList() })
+app.get('/api/members', (req, res) => {
+  const user = authFromHeader(req)
+  if (!user) return res.status(401).json({ error: 'Unauthorized' })
+  res.json({ members: presenceList() })
 })
 
-function publicHost(req) {
-  if (process.env.PUBLIC_HOST) return process.env.PUBLIC_HOST.replace(/^https?:\/\//, '').replace(/\/$/, '')
-  if (process.env.RENDER_EXTERNAL_HOSTNAME) return process.env.RENDER_EXTERNAL_HOSTNAME
-  const xf = req.headers['x-forwarded-host']
-  if (xf) return String(xf).split(',')[0].trim()
-  return String(req.headers.host || req.get?.('host') || 'localhost:3001')
+if (fs.existsSync(DATA_DIR)) {
+  app.use(express.static(DATA_DIR))
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(DATA_DIR, 'index.html'))
+  })
 }
 
-function publicProto(req) {
-  if (process.env.RENDER_EXTERNAL_HOSTNAME || process.env.NODE_ENV === 'production') return 'https'
-  const xf = String(req.headers['x-forwarded-proto'] || '')
-  if (xf) return xf.split(',')[0].trim()
-  return req.protocol || 'http'
-}
-
-function ingestPayload(req, user) {
-  const origin = `${publicProto(req)}://${publicHost(req)}`
-  return {
-    whipUrl: `${origin}/api/whip/${encodeURIComponent(user.streamKey)}`,
-    rtmpUrl: `${origin}/api/whip/${encodeURIComponent(user.streamKey)}`,
-    streamKey: user.streamKey,
-    playbackUrl: `/playback/${user.username}.flv`,
-    title: ingestMeta.get(user.username)?.title || 'Live on VOLT',
-    category: ingestMeta.get(user.username)?.category || 'just-chatting',
-    live: ['rtmp', 'whip'].includes(liveStreams.get(user.username)?.source),
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token
+  if (!token) return next(new Error('Unauthorized'))
+  try {
+    const payload = jwt.verify(token, JWT_SECRET)
+    const user = users.find((u) => u.id === payload.id)
+    if (!user) return next(new Error('Unauthorized'))
+    socket.user = user
+    next()
+  } catch {
+    next(new Error('Unauthorized'))
   }
-}
-
-app.get('/api/ingest', (req, res) => {
-  const user = authUser(req)
-  if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  if (!user.streamKey) {
-    user.streamKey = makeStreamKey()
-    saveUsers(users)
-  }
-  res.json(ingestPayload(req, user))
 })
-
-app.post('/api/ingest', (req, res) => {
-  const user = authUser(req)
-  if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  const title = String(req.body.title || 'Live on VOLT').slice(0, 140)
-  const category = String(req.body.category || 'just-chatting')
-  ingestMeta.set(user.username, { title, category })
-  const current = liveStreams.get(user.username)
-  if (current?.source === 'rtmp') {
-    liveStreams.set(user.username, { ...current, title, category })
-    broadcastLive()
-  }
-  res.json(ingestPayload(req, user))
-})
-
-app.post('/api/ingest/rotate', (req, res) => {
-  const user = authUser(req)
-  if (!user) return res.status(401).json({ error: 'Unauthorized' })
-  user.streamKey = makeStreamKey()
-  saveUsers(users)
-  res.json(ingestPayload(req, user))
-})
-
-app.get('/playback/:file', (req, res) => {
-  const match = String(req.params.file || '').match(/^([a-z0-9_]+)\.flv$/i)
-  if (!match) return res.status(404).end()
-  const username = match[1].toLowerCase()
-  const user = users.find((u) => u.username === username)
-  const stream = liveStreams.get(username)
-  if (!user?.streamKey || stream?.source !== 'rtmp') return res.status(404).end()
-  const upstream = http.request(
-    {
-      hostname: '127.0.0.1',
-      port: NMS_HTTP_PORT,
-      path: `/live/${user.streamKey}.flv`,
-      method: 'GET',
-      headers: { connection: 'keep-alive' },
-    },
-    (up) => {
-      res.writeHead(up.statusCode || 200, {
-        'Content-Type': 'video/x-flv',
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-cache',
-      })
-      up.pipe(res)
-    },
-  )
-  upstream.on('error', () => {
-    if (!res.headersSent) res.status(502).end()
-    else res.end()
-  })
-  req.on('close', () => upstream.destroy())
-  upstream.end()
-})
-
-function setRtmpLive(user) {
-  const meta = ingestMeta.get(user.username) || {}
-  liveStreams.set(user.username, {
-    id: `live-${user.username}`,
-    username: user.username,
-    title: meta.title || 'Live on VOLT',
-    category: meta.category || 'just-chatting',
-    language: 'English',
-    mature: false,
-    viewers: liveStreams.get(user.username)?.viewers || 0,
-    thumbnail: '',
-    videoUrl: `/playback/${user.username}.flv`,
-    tags: ['English', 'OBS'],
-    featured: true,
-    source: 'rtmp',
-  })
-  broadcastLive()
-}
-
-function endRtmpLive(user) {
-  const current = liveStreams.get(user.username)
-  if (current?.source !== 'rtmp') return
-  liveStreams.delete(user.username)
-  io.to(`watch:${user.username}`).emit('live:ended')
-  broadcastLive()
-}
-
-function setWhipLive(user) {
-  const meta = ingestMeta.get(user.username) || {}
-  liveStreams.set(user.username, {
-    id: `live-${user.username}`,
-    username: user.username,
-    title: meta.title || 'Live on VOLT',
-    category: meta.category || 'just-chatting',
-    language: 'English',
-    mature: false,
-    viewers: liveStreams.get(user.username)?.viewers || 0,
-    thumbnail: '',
-    videoUrl: '',
-    tags: ['English', 'OBS'],
-    featured: true,
-    source: 'whip',
-  })
-  broadcastLive()
-}
-
-function endWhipLive(user) {
-  const current = liveStreams.get(user.username)
-  if (!current || current.source !== 'whip') return
-  if (hostSockets.has(user.username)) return
-  liveStreams.delete(user.username)
-  io.to(`watch:${user.username}`).emit('live:ended')
-  broadcastLive()
-}
-
-const whip = createWhipHub({
-  io,
-  getUserByKey: (key) => users.find((u) => u.streamKey && u.streamKey === key) || null,
-  onPublish: setWhipLive,
-  onUnpublish: endWhipLive,
-})
-whip.attach(app)
-
-try {
-  startRtmpServer({
-    rtmpPort: RTMP_PORT,
-    httpPort: NMS_HTTP_PORT,
-    getUserByKey: (key) => users.find((u) => u.streamKey && u.streamKey === key) || null,
-    onPublish: setRtmpLive,
-    onUnpublish: endRtmpLive,
-  })
-  console.log(`RTMP ingest on rtmp://0.0.0.0:${RTMP_PORT}/live`)
-} catch (err) {
-  console.error('RTMP server failed to start:', err)
-}
-
-if (process.env.NODE_ENV === 'production') {
-  const dist = path.join(__dirname, '..', 'dist')
-  app.use(express.static(dist))
-  app.get('/{*path}', (_req, res) => res.sendFile(path.join(dist, 'index.html')))
-}
 
 io.on('connection', (socket) => {
-  socket.on('chat:join', (slug) => {
-    if (!slug) return
-    socket.join(`chat:${String(slug).toLowerCase()}`)
+  const user = socket.user
+  let entry = online.get(user.id)
+  if (!entry) {
+    entry = { socketIds: new Set(), status: 'online' }
+    online.set(user.id, entry)
+  }
+  entry.socketIds.add(socket.id)
+  entry.status = 'online'
+  broadcastPresence()
+
+  socket.emit('ready', {
+    channels: CHANNELS,
+    members: presenceList(),
+    user: publicUser(user, entry),
   })
 
-  socket.on('chat:leave', (slug) => {
-    if (!slug) return
-    socket.leave(`chat:${String(slug).toLowerCase()}`)
+  socket.on('channel:join', (channelId) => {
+    const channel = CHANNELS.find((c) => c.id === channelId)
+    if (!channel) return
+    for (const room of socket.rooms) {
+      if (room.startsWith('channel:')) socket.leave(room)
+    }
+    socket.join(`channel:${channelId}`)
+    const list = messagesByChannel[channelId] || []
+    socket.emit('channel:history', { channelId, messages: list.slice(-200) })
   })
 
-  socket.on('chat:send', (payload) => {
-    const slug = String(payload?.slug || '').toLowerCase()
-    const text = String(payload?.text || '').trim().slice(0, 240)
-    const username = String(payload?.username || 'anon').slice(0, 24)
-    if (!slug || !text) return
-    const message = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      username,
+  socket.on('message:send', (payload) => {
+    const channelId = String(payload?.channelId || '')
+    const text = sanitizeText(payload?.text)
+    const channel = CHANNELS.find((c) => c.id === channelId)
+    if (!channel || !text) return
+
+    const msg = {
+      id: crypto.randomUUID(),
+      channelId,
+      userId: user.id,
+      username: user.username,
+      displayName: user.displayName,
       text,
-      ts: Date.now(),
-      color: payload?.color || '#69db7c',
+      createdAt: Date.now(),
     }
-    io.to(`chat:${slug}`).emit('chat:message', message)
+    if (!messagesByChannel[channelId]) messagesByChannel[channelId] = []
+    messagesByChannel[channelId].push(msg)
+    if (messagesByChannel[channelId].length > 500) {
+      messagesByChannel[channelId] = messagesByChannel[channelId].slice(-400)
+    }
+    saveJson(MESSAGES_FILE, messagesByChannel)
+    io.to(`channel:${channelId}`).emit('message:new', msg)
   })
 
-  socket.on('live:start', (payload) => {
-    const username = String(payload?.username || '').toLowerCase()
-    if (!username) return
-    const stream = {
-      id: `live-${username}`,
-      username,
-      title: String(payload?.title || 'Live now').slice(0, 140),
-      category: String(payload?.category || 'just-chatting'),
-      language: String(payload?.language || 'English'),
-      mature: !!payload?.mature,
-      viewers: 0,
-      thumbnail: '',
-      videoUrl: '',
-      tags: payload?.tags || ['English'],
-      featured: true,
-      source: 'webrtc',
-    }
-    liveStreams.set(username, stream)
-    hostSockets.set(username, socket.id)
-    socket.data.liveUsername = username
-    socket.join(`watch:${username}`)
-    broadcastLive()
+  socket.on('presence:set', (status) => {
+    const allowed = ['online', 'idle', 'dnd']
+    if (!allowed.includes(status)) return
+    const current = online.get(user.id)
+    if (!current) return
+    current.status = status
+    broadcastPresence()
   })
 
-  socket.on('live:update-meta', (payload) => {
-    const username = socket.data.liveUsername
-    if (!username || !liveStreams.has(username)) return
-    const current = liveStreams.get(username)
-    liveStreams.set(username, {
-      ...current,
-      title: payload?.title ?? current.title,
-      category: payload?.category ?? current.category,
+  socket.on('typing:start', (channelId) => {
+    if (!CHANNELS.find((c) => c.id === channelId)) return
+    socket.to(`channel:${channelId}`).emit('typing:update', {
+      channelId,
+      userId: user.id,
+      displayName: user.displayName,
+      typing: true,
     })
-    broadcastLive()
   })
 
-  socket.on('watch:join', (usernameRaw) => {
-    const username = String(usernameRaw || '').toLowerCase()
-    socket.data.watching = username
-    socket.join(`watch:${username}`)
-    const stream = liveStreams.get(username)
-    if (stream) {
-      stream.viewers += 1
-      liveStreams.set(username, stream)
-      broadcastLive()
-    }
-    const hostId = hostSockets.get(username)
-    if (whip.hasPublisher(username)) {
-      whip.addViewer(username, socket.id).catch(() => {})
-    } else if (hostId) {
-      io.to(hostId).emit('viewer:joined', { viewerId: socket.id })
-    }
-  })
-
-  socket.on('watch:leave', () => {
-    const username = socket.data.watching
-    if (!username) return
-    socket.leave(`watch:${username}`)
-    const stream = liveStreams.get(username)
-    if (stream) {
-      stream.viewers = Math.max(0, stream.viewers - 1)
-      liveStreams.set(username, stream)
-      broadcastLive()
-    }
-    const hostId = hostSockets.get(username)
-    if (whip.hasPublisher(username)) whip.removeViewer(username, socket.id)
-    else if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
-    socket.data.watching = null
-  })
-
-  socket.on('webrtc:offer', ({ to, sdp }) => {
-    if (to) io.to(to).emit('webrtc:offer', { from: socket.id, sdp })
-  })
-
-  socket.on('webrtc:answer', ({ to, sdp }) => {
-    if (typeof to === 'string' && to.startsWith('sfu:')) {
-      whip.handleAnswer(to.slice(4), socket.id, sdp).catch(() => {})
-      return
-    }
-    if (to) io.to(to).emit('webrtc:answer', { from: socket.id, sdp })
-  })
-
-  socket.on('webrtc:ice', ({ to, candidate }) => {
-    if (typeof to === 'string' && to.startsWith('sfu:')) {
-      whip.handleIce(to.slice(4), socket.id, candidate).catch(() => {})
-      return
-    }
-    if (to) io.to(to).emit('webrtc:ice', { from: socket.id, candidate })
-  })
-
-  socket.on('live:stop', () => {
-    const username = socket.data.liveUsername
-    if (!username) return
-    if (whip.hasPublisher(username)) {
-      socket.data.liveUsername = null
-      return
-    }
-    const current = liveStreams.get(username)
-    if (current && current.source !== 'webrtc') {
-      socket.data.liveUsername = null
-      return
-    }
-    liveStreams.delete(username)
-    hostSockets.delete(username)
-    io.to(`watch:${username}`).emit('live:ended')
-    socket.data.liveUsername = null
-    broadcastLive()
+  socket.on('typing:stop', (channelId) => {
+    if (!CHANNELS.find((c) => c.id === channelId)) return
+    socket.to(`channel:${channelId}`).emit('typing:update', {
+      channelId,
+      userId: user.id,
+      displayName: user.displayName,
+      typing: false,
+    })
   })
 
   socket.on('disconnect', () => {
-    const watching = socket.data.watching
-    if (watching) {
-      const stream = liveStreams.get(watching)
-      if (stream) {
-        stream.viewers = Math.max(0, stream.viewers - 1)
-        liveStreams.set(watching, stream)
-      }
-      const hostId = hostSockets.get(watching)
-      if (whip.hasPublisher(watching)) whip.removeViewer(watching, socket.id)
-      else if (hostId) io.to(hostId).emit('viewer:left', { viewerId: socket.id })
+    const current = online.get(user.id)
+    if (!current) return
+    current.socketIds.delete(socket.id)
+    if (current.socketIds.size === 0) {
+      online.delete(user.id)
     }
-    const username = socket.data.liveUsername
-    if (username) {
-      if (whip.hasPublisher(username)) {
-        socket.data.liveUsername = null
-      } else {
-        const current = liveStreams.get(username)
-        if (!current || current.source === 'webrtc') {
-          liveStreams.delete(username)
-          hostSockets.delete(username)
-          io.to(`watch:${username}`).emit('live:ended')
-        }
-      }
-    }
-    broadcastLive()
+    broadcastPresence()
   })
 })
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`VOLT server on http://localhost:${PORT}`)
+server.listen(PORT, () => {
+  console.log(`War Dogs listening on :${PORT}`)
 })
