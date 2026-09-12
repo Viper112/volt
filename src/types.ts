@@ -1,63 +1,27 @@
-export type Streamer = {
-  username: string
-  displayName: string
-  verified: boolean
-  followers: number
-  bio: string
-  seed: string
-  socials: {
-    x?: string
-    youtube?: string
-    instagram?: string
-    discord?: string
-  }
-}
+export type PresenceStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
-export type Category = {
-  slug: string
+export type Channel = {
+  id: string
   name: string
-  image: string
-  tags: string[]
-}
-
-export type Stream = {
-  id: string
-  username: string
-  title: string
+  topic: string
   category: string
-  language: string
-  mature: boolean
-  viewers: number
-  thumbnail: string
-  videoUrl: string
-  tags: string[]
-  featured?: boolean
-  source: 'vod' | 'webrtc' | 'rtmp' | 'whip'
 }
 
-export type Clip = {
-  id: string
-  username: string
-  title: string
-  views: number
-  duration: string
-  thumbnail: string
-  videoUrl: string
-  createdAt: string
-}
-
-export type User = {
+export type Member = {
   id: string
   username: string
   displayName: string
-  following: string[]
+  status: PresenceStatus
 }
 
 export type ChatMessage = {
   id: string
+  channelId: string
+  userId: string
   username: string
+  displayName: string
   text: string
-  ts: number
-  color: string
-  system?: boolean
+  createdAt: number
 }
+
+export type AuthUser = Member

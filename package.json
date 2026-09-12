@@ -1,12 +1,13 @@
 {
-  "name": "volt",
+  "name": "wardogs",
   "private": true,
   "version": "1.0.0",
   "engines": {
     "node": ">=20"
   },
+  "type": "module",
   "scripts": {
-    "dev": "concurrently -n server,web -c green,cyan \"node --watch server/index.js\" \"vite\"",
+    "dev": "concurrently -n server,web -c yellow,cyan \"node --watch server/index.js\" \"vite\"",
     "dev:web": "vite",
     "dev:server": "node --watch server/index.js",
     "build": "vite build",
@@ -15,7 +16,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@roamhq/wrtc": "^0.10.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
@@ -24,13 +24,10 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "flv.js": "^1.6.2",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.32.0",
-    "node-media-server": "^4.2.8",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "tailwindcss": "^4.3.3",

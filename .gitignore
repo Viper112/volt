@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 server/users.json
+server/messages.json
 dist-ssr
 *.local
 

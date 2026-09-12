@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="6" fill="#0b0e0f"/>
-  <path d="M13 3 5 14h7l-1 7 9-13h-7z" fill="#53FC18"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="14" fill="#171b14"/>
+  <path d="M18 40c2.5-8 7-14 14-14s11.5 6 14 14" stroke="#c4a35a" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="26" cy="28" r="3" fill="#6f8f4e"/>
+  <circle cx="38" cy="28" r="3" fill="#6f8f4e"/>
+  <path d="M24 18l-4 6M40 18l4 6" stroke="#c4a35a" stroke-width="3" stroke-linecap="round"/>
+  <text x="32" y="52" text-anchor="middle" fill="#ebe6d8" font-family="Arial Black, sans-serif" font-size="10" letter-spacing="1">WD</text>
 </svg>
