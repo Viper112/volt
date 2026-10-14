@@ -82,7 +82,7 @@ const PumpkinAttack: React.FC = () => {
         }}
       >
         <Img
-          src={staticFile("group-clean.jpg")}
+          src={staticFile("group.jpg")}
           style={{
             width: "100%",
             height: "100%",
@@ -152,15 +152,22 @@ const AttackPumpkin: React.FC<{
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const wake = delay + 0.7 * fps;
-  const leapStart = delay + 1.7 * fps;
-  const leapEnd = leapStart + 0.55 * fps;
+  const wake = delay + 0.4 * fps;
+  const leapStart = delay + 1.1 * fps;
+  const leapEnd = leapStart + 1.15 * fps;
   const chompStart = leapEnd;
+
+  // Spirit pumpkin materializes over the real one, then leaps out
+  const materialize = interpolate(frame, [wake, wake + 0.45 * fps], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.16, 1, 0.3, 1),
+  });
 
   const wakePulse = interpolate(
     frame,
     [wake, wake + 0.35 * fps, leapStart],
-    [1, 1.08, 1.04],
+    [0.92, 1.12, 1.06],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
@@ -168,20 +175,15 @@ const AttackPumpkin: React.FC<{
     },
   );
 
-  const wobble = interpolate(
-    frame,
-    [wake, leapStart],
-    [0, 1],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    },
-  );
+  const wobble = interpolate(frame, [wake, leapStart], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   const leapProgress = interpolate(frame, [leapStart, leapEnd], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
-    easing: Easing.bezier(0.15, 0.9, 0.25, 1),
+    easing: Easing.bezier(0.12, 0.85, 0.2, 1),
   });
 
   const startX = pumpkin.x * SCALE;
@@ -189,11 +191,10 @@ const AttackPumpkin: React.FC<{
   const width = pumpkin.w * SCALE;
   const height = pumpkin.h * SCALE;
 
-  // Aim at the face so they jump into the person
   const endX = pumpkin.targetX * SCALE - width * 0.45;
-  const endY = pumpkin.targetY * SCALE - height * 0.35;
+  const endY = pumpkin.targetY * SCALE - height * 0.4;
 
-  const arc = Math.sin(leapProgress * Math.PI) * (-90 - index * 12);
+  const arc = Math.sin(leapProgress * Math.PI) * (-200 - index * 20);
 
   const chompT = Math.max(0, frame - chompStart);
   const chompBounce =
@@ -208,24 +209,34 @@ const AttackPumpkin: React.FC<{
     startY + (endY - startY) * leapProgress + arc + chompBounce;
 
   const spin =
-    interpolate(frame, [leapStart, leapEnd + 1.2 * fps], [0, 380 + index * 40], {
+    interpolate(frame, [leapStart, leapEnd + 1.2 * fps], [0, 420 + index * 45], {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
       easing: Easing.bezier(0.2, 0.8, 0.2, 1),
     }) +
     Math.sin(frame * 0.35 + index) * 10 * wobble;
 
-  const glow = interpolate(frame, [wake, leapStart, chompStart + 0.5 * fps], [0, 0.9, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const glow = interpolate(
+    frame,
+    [wake, leapStart, chompStart + 0.5 * fps],
+    [0, 1, 1],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    },
+  );
 
   const scaleBoost =
     wakePulse *
-    interpolate(frame, [leapStart, leapEnd, chompStart + 0.3 * fps], [1, 1.25, 1.12], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    });
+    interpolate(
+      frame,
+      [leapStart, leapStart + 0.35 * fps, leapEnd, chompStart + 0.3 * fps],
+      [1, 1.35, 1.2, 1.1],
+      {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      },
+    );
 
   return (
     <div
@@ -235,9 +246,10 @@ const AttackPumpkin: React.FC<{
         top: y,
         width,
         height,
+        opacity: materialize,
         rotate: `${spin + Math.sin(frame * 0.5 + index) * 8 * wobble}deg`,
         scale: scaleBoost,
-        filter: `drop-shadow(0 0 ${18 * glow}px rgba(255,120,0,${0.85 * glow})) drop-shadow(0 ${12 + 20 * leapProgress}px ${18 + 10 * leapProgress}px rgba(0,0,0,0.45))`,
+        filter: `drop-shadow(0 0 ${22 * glow}px rgba(255,120,0,${0.9 * glow})) drop-shadow(0 ${12 + 24 * leapProgress}px ${20 + 12 * leapProgress}px rgba(0,0,0,0.5))`,
         zIndex: 10 + index + Math.round(leapProgress * 10),
         transformOrigin: "50% 50%",
       }}
